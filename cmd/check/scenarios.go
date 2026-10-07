@@ -93,18 +93,63 @@ func checkRecordInspection(c *client) error {
 		return err
 	}
 	if _, err := c.expect("POST", "/hives/hive-01/inspections", map[string]any{
-		"observedAt": "2026-04-10T09:00:00Z", "colonyStrength": 9, "broodPattern": "patchy",
-		"temper": "calm", "miteCount": 3, "note": "",
+		"observedAt": "2026-04-10T09:00:00Z", "colonyStrength": 9, "strengthUnit": "grade",
+		"broodPattern": "patchy", "temper": "calm", "miteCount": 3, "miteUnit": "per100", "note": "",
+	}, 400, `"code":"invalid_request"`); err != nil {
+		return err
+	}
+	// 未携带单位不能被静默接受。
+	if _, err := c.expect("POST", "/hives/hive-01/inspections", map[string]any{
+		"observedAt": "2026-04-10T09:00:00Z", "colonyStrength": 3,
+		"broodPattern": "patchy", "temper": "calm", "miteCount": 3, "miteUnit": "per100", "note": "",
+	}, 400, `"code":"invalid_request"`, `"strengthUnit"`); err != nil {
+		return err
+	}
+	// 未知单位与跨维度不兼容单位都必须显式拒绝。
+	if _, err := c.expect("POST", "/hives/hive-01/inspections", map[string]any{
+		"observedAt": "2026-04-10T09:00:00Z", "colonyStrength": 3, "strengthUnit": "basket",
+		"broodPattern": "patchy", "temper": "calm", "miteCount": 3, "miteUnit": "per100", "note": "",
+	}, 400, `"code":"invalid_request"`, `"strengthUnit"`); err != nil {
+		return err
+	}
+	if _, err := c.expect("POST", "/hives/hive-01/inspections", map[string]any{
+		"observedAt": "2026-04-10T09:00:00Z", "colonyStrength": 3, "strengthUnit": "per100",
+		"broodPattern": "patchy", "temper": "calm", "miteCount": 3, "miteUnit": "grade", "note": "",
+	}, 400, `"code":"invalid_request"`, `"strengthUnit"`); err != nil {
+		return err
+	}
+	// 非规范单位原始值越界同样拒绝：frame 限 1..10，per300 限 0..180。
+	if _, err := c.expect("POST", "/hives/hive-01/inspections", map[string]any{
+		"observedAt": "2026-04-10T09:00:00Z", "colonyStrength": 11, "strengthUnit": "frame",
+		"broodPattern": "patchy", "temper": "calm", "miteCount": 3, "miteUnit": "per100", "note": "",
 	}, 400, `"code":"invalid_request"`); err != nil {
 		return err
 	}
 	if _, err := c.expect("POST", "/hives/hive-01/inspections", map[string]any{
-		"observedAt": "2026-04-10T09:00:00Z", "colonyStrength": 3, "broodPattern": "patchy",
-		"temper": "aggressive", "miteCount": 12, "note": "西侧巢门观察",
-	}, 201, `"inspection-000001"`, `"mite_load"`, `"temper_risk"`); err != nil {
+		"observedAt": "2026-04-10T09:00:00Z", "colonyStrength": 3, "strengthUnit": "grade",
+		"broodPattern": "patchy", "temper": "calm", "miteCount": 200, "miteUnit": "per300", "note": "",
+	}, 400, `"code":"invalid_request"`); err != nil {
 		return err
 	}
-	if _, err := c.expect("GET", "/hives/hive-01/inspections", nil, 200, `"note":"西侧巢门观察"`); err != nil {
+	// 非规范口径在接收时换算并固化：frame 3 -> grade 2，per300 30 -> per100 10，
+	// 关注项基于换算后的口径派生（mite_load 与 low_strength）。
+	if _, err := c.expect("POST", "/hives/hive-01/inspections", map[string]any{
+		"observedAt": "2026-04-10T08:00:00Z", "colonyStrength": 3, "strengthUnit": "frame",
+		"broodPattern": "patchy", "temper": "calm", "miteCount": 30, "miteUnit": "per300", "note": "框数与三百只抽样",
+	}, 201, `"inspection-000001"`,
+		`"rawValue":3`, `"rawUnit":"frame"`, `"colonyStrength":2`, `"strengthUnit":"grade"`,
+		`"rawUnit":"per300"`, `"miteCount":10`, `"miteUnit":"per100"`, `"rulesVersion":"v1"`,
+		`"mite_load"`, `"low_strength"`); err != nil {
+		return err
+	}
+	if _, err := c.expect("POST", "/hives/hive-01/inspections", map[string]any{
+		"observedAt": "2026-04-10T09:00:00Z", "colonyStrength": 3, "strengthUnit": "grade", "broodPattern": "patchy",
+		"temper": "aggressive", "miteCount": 12, "miteUnit": "per100", "note": "西侧巢门观察",
+	}, 201, `"inspection-000002"`, `"mite_load"`, `"temper_risk"`); err != nil {
+		return err
+	}
+	if _, err := c.expect("GET", "/hives/hive-01/inspections", nil, 200,
+		`"note":"框数与三百只抽样"`, `"rawUnit":"frame"`, `"note":"西侧巢门观察"`); err != nil {
 		return err
 	}
 	if _, err := c.expect("POST", "/hives/hive-01/state", map[string]any{"target": "retired"}, 200,
@@ -112,8 +157,8 @@ func checkRecordInspection(c *client) error {
 		return err
 	}
 	if _, err := c.expect("POST", "/hives/hive-01/inspections", map[string]any{
-		"observedAt": "2026-04-11T09:00:00Z", "colonyStrength": 3, "broodPattern": "solid",
-		"temper": "calm", "miteCount": 1, "note": "",
+		"observedAt": "2026-04-11T09:00:00Z", "colonyStrength": 3, "strengthUnit": "grade", "broodPattern": "solid",
+		"temper": "calm", "miteCount": 1, "miteUnit": "per100", "note": "",
 	}, 409, `"code":"invalid_state"`); err != nil {
 		return err
 	}
@@ -200,9 +245,9 @@ func checkReadApiaryStatus(c *client) error {
 		return err
 	}
 	if _, err := c.expect("POST", "/hives/hive-01/inspections", map[string]any{
-		"observedAt": "2026-04-10T09:00:00Z", "colonyStrength": 4, "broodPattern": "solid",
-		"temper": "calm", "miteCount": 12, "note": "",
-	}, 201, `"mite_load"`); err != nil {
+		"observedAt": "2026-04-10T09:00:00Z", "colonyStrength": 8, "strengthUnit": "frame",
+		"broodPattern": "solid", "temper": "calm", "miteCount": 36, "miteUnit": "per300", "note": "",
+	}, 201, `"mite_load"`, `"colonyStrength":4`, `"strengthUnit":"grade"`, `"miteCount":12`, `"miteUnit":"per100"`); err != nil {
 		return err
 	}
 	report, err := c.expect("GET", "/apiaries/apiary-north/status?asOf=2026-04-12T00:00:00Z", nil, 200,
@@ -213,6 +258,8 @@ func checkReadApiaryStatus(c *client) error {
 	for _, fragment := range []string{
 		`"needsInspection":["hive-02","hive-03"]`,
 		`"concernHives":["hive-01"]`,
+		// 汇总呈现必须与巡检记录使用同一规范口径，且取自已保存的换算结果。
+		`"latestMeasurements":{"colonyStrength":4,"strengthUnit":"grade","miteCount":12,"miteUnit":"per100"}`,
 	} {
 		if !strings.Contains(report.text(), fragment) {
 			return fmt.Errorf("状态汇总缺少 %q：%s", fragment, report.text())

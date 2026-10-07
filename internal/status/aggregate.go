@@ -10,13 +10,23 @@ import (
 
 const InspectionWindow = 14 * 24 * time.Hour
 
+// LatestMeasurements 是最近一次巡检在规范口径下的量测呈现，
+// 直接取自已保存巡检，与巡检记录使用同一口径，汇总时不重新换算。
+type LatestMeasurements struct {
+	ColonyStrength int         `json:"colonyStrength"`
+	StrengthUnit   domain.Unit `json:"strengthUnit"`
+	MiteCount      int         `json:"miteCount"`
+	MiteUnit       domain.Unit `json:"miteUnit"`
+}
+
 type HiveSummary struct {
-	HiveID           string     `json:"hiveId"`
-	State            string     `json:"state"`
-	LastInspectionAt *time.Time `json:"lastInspectionAt"`
-	LatestConcerns   []string   `json:"latestConcerns"`
-	QueenID          string     `json:"queenId"`
-	QueenMarkColor   string     `json:"queenMarkColor"`
+	HiveID             string              `json:"hiveId"`
+	State              string              `json:"state"`
+	LastInspectionAt   *time.Time          `json:"lastInspectionAt"`
+	LatestConcerns     []string            `json:"latestConcerns"`
+	LatestMeasurements *LatestMeasurements `json:"latestMeasurements"`
+	QueenID            string              `json:"queenId"`
+	QueenMarkColor     string              `json:"queenMarkColor"`
 }
 
 type Report struct {
@@ -61,6 +71,14 @@ func BuildReport(snapshot store.Snapshot, apiary domain.Apiary, asOf time.Time) 
 		if latest, ok := snapshot.LatestInspection(hive.ID); ok {
 			observedAt := latest.ObservedAt
 			summary.LastInspectionAt = &observedAt
+			// 呈现最近巡检保存时已固化的规范口径，保证巡检与汇总同一口径；
+			// 不引用换算规则，规则表变化不会影响已保存数据的呈现。
+			summary.LatestMeasurements = &LatestMeasurements{
+				ColonyStrength: latest.ColonyStrength,
+				StrengthUnit:   latest.StrengthUnit,
+				MiteCount:      latest.MiteCount,
+				MiteUnit:       latest.MiteUnit,
+			}
 			if len(latest.Concerns) > 0 {
 				summary.LatestConcerns = append([]string{}, latest.Concerns...)
 				report.ConcernHives = append(report.ConcernHives, hive.ID)

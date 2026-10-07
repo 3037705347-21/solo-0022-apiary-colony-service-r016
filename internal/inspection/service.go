@@ -23,9 +23,11 @@ func New(memory *store.Memory, clock func() time.Time) *Service {
 type RecordInput struct {
 	ObservedAt     time.Time
 	ColonyStrength int
+	StrengthUnit   string
 	BroodPattern   string
 	Temper         string
 	MiteCount      int
+	MiteUnit       string
 	Note           string
 }
 
@@ -38,9 +40,11 @@ func (s *Service) Record(hiveID string, input RecordInput) (domain.Inspection, e
 		hiveID,
 		observedAt,
 		input.ColonyStrength,
+		input.StrengthUnit,
 		domain.BroodPattern(domain.TrimText(input.BroodPattern)),
 		domain.Temper(domain.TrimText(input.Temper)),
 		input.MiteCount,
+		input.MiteUnit,
 		input.Note,
 	)
 	if err != nil {

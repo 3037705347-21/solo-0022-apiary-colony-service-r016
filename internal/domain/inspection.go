@@ -19,16 +19,23 @@ const (
 )
 
 // Inspection 是一次现场巡检的固化结果，关注项由量测派生。
+// ColonyStrength 与 MiteCount 始终以规范口径保存：接收时已按提交单位换算完成，
+// 之后不再重新换算，因此规则升级不会改写已保存的巡检与关注项。
 type Inspection struct {
 	ID             string       `json:"id"`
 	HiveID         string       `json:"hiveId"`
 	ObservedAt     time.Time    `json:"observedAt"`
 	ColonyStrength int          `json:"colonyStrength"`
+	StrengthUnit   Unit         `json:"strengthUnit"`
 	BroodPattern   BroodPattern `json:"broodPattern"`
 	Temper         Temper       `json:"temper"`
 	MiteCount      int          `json:"miteCount"`
-	Note           string       `json:"note"`
-	Concerns       []string     `json:"concerns"`
+	MiteUnit       Unit         `json:"miteUnit"`
+	// Strength 与 Mite 保留提交时的原始数值、单位与规范换算结果。
+	Strength Measurement `json:"strength"`
+	Mite     Measurement `json:"mite"`
+	Note     string      `json:"note"`
+	Concerns []string    `json:"concerns"`
 }
 
 const (
@@ -42,10 +49,12 @@ const (
 func NewInspection(
 	hiveID string,
 	observedAt time.Time,
-	strength int,
+	strengthValue int,
+	strengthUnit string,
 	brood BroodPattern,
 	temper Temper,
-	miteCount int,
+	miteValue int,
+	miteUnit string,
 	note string,
 ) (Inspection, error) {
 	if err := ValidateIdentifier("hiveId", hiveID, 3, 40); err != nil {
@@ -54,7 +63,8 @@ func NewInspection(
 	if observedAt.IsZero() {
 		return Inspection{}, Invalid("observedAt", "observedAt 不能为空")
 	}
-	if err := ValidateIntRange("colonyStrength", strength, MinColonyStrength, MaxColonyStrength); err != nil {
+	strength, err := NormalizeMeasurement("colonyStrength", "strengthUnit", strengthValue, strengthUnit, KindStrength)
+	if err != nil {
 		return Inspection{}, err
 	}
 	if !ValidBroodPattern(brood) {
@@ -63,7 +73,8 @@ func NewInspection(
 	if !ValidTemper(temper) {
 		return Inspection{}, Invalid("temper", "temper 必须是 %s、%s 或 %s", TemperCalm, TemperNervous, TemperAggressive)
 	}
-	if err := ValidateIntRange("miteCount", miteCount, MinMiteCount, MaxMiteCount); err != nil {
+	mite, err := NormalizeMeasurement("miteCount", "miteUnit", miteValue, miteUnit, KindMite)
+	if err != nil {
 		return Inspection{}, err
 	}
 	if err := ValidateText("note", note, 0, MaxNoteRunes); err != nil {
@@ -72,10 +83,14 @@ func NewInspection(
 	return Inspection{
 		HiveID:         TrimText(hiveID),
 		ObservedAt:     observedAt.UTC(),
-		ColonyStrength: strength,
+		ColonyStrength: strength.Value,
+		StrengthUnit:   strength.Unit,
 		BroodPattern:   brood,
 		Temper:         temper,
-		MiteCount:      miteCount,
+		MiteCount:      mite.Value,
+		MiteUnit:       mite.Unit,
+		Strength:       strength,
+		Mite:           mite,
 		Note:           TrimText(note),
 		Concerns:       []string{},
 	}, nil

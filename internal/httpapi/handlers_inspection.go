@@ -10,9 +10,11 @@ import (
 type recordInspectionRequest struct {
 	ObservedAt     string `json:"observedAt"`
 	ColonyStrength int    `json:"colonyStrength"`
+	StrengthUnit   string `json:"strengthUnit"`
 	BroodPattern   string `json:"broodPattern"`
 	Temper         string `json:"temper"`
 	MiteCount      int    `json:"miteCount"`
+	MiteUnit       string `json:"miteUnit"`
 	Note           string `json:"note"`
 }
 
@@ -29,9 +31,11 @@ func (s *Server) handleRecordInspection(w http.ResponseWriter, r *http.Request) 
 	}
 	input := inspection.RecordInput{
 		ColonyStrength: request.ColonyStrength,
+		StrengthUnit:   request.StrengthUnit,
 		BroodPattern:   request.BroodPattern,
 		Temper:         request.Temper,
 		MiteCount:      request.MiteCount,
+		MiteUnit:       request.MiteUnit,
 		Note:           request.Note,
 	}
 	if observedAt != nil {

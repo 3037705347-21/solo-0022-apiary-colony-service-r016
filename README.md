@@ -47,13 +47,16 @@ go run ./cmd/check -workflow read-apiary-status
 - `GET /hives/{hiveId}`：读回蜂箱。
 - `POST /hives/{hiveId}/state`：输入 `target`，返回迁移前后的状态。
 - `POST /hives/{hiveId}/inspections`：输入 `observedAt`（可选，RFC3339）、`colonyStrength`、
-  `broodPattern`、`temper`、`miteCount`、`note`，返回巡检与派生关注项。
+  `strengthUnit`、`broodPattern`、`temper`、`miteCount`、`miteUnit`、`note`，
+  服务在接收时把量测换算到规范口径（群势 `grade`、螨计数 `per100`）后保存并派生关注项，
+  返回内容同时包含原始值/原始单位与规范值/规范单位及 `rulesVersion`。
 - `GET /hives/{hiveId}/inspections`：列出巡检。
 - `POST /hives/{hiveId}/queens`：输入 `origin`、`introducedAt`（可选）、`reason`，
   返回带标记色的新蜂王记录。
 - `GET /hives/{hiveId}/queens`：列出蜂王记录。
 - `GET /apiaries/{apiaryId}/status`：可选查询参数 `asOf`（RFC3339），返回状态计数、
-  待巡检蜂箱、有未处理关注项的蜂箱与逐蜂箱摘要。
+  待巡检蜂箱、有未处理关注项的蜂箱与逐蜂箱摘要；摘要中的最近量测使用与巡检相同的
+  规范口径（`latestMeasurements`：`grade` / `per100`）。
 
 错误响应统一为：
 
@@ -63,6 +66,21 @@ go run ./cmd/check -workflow read-apiary-status
 
 错误分类：`invalid_request`、`not_found`、`conflict`、`invalid_state`、`storage_error`。
 
+## 量测单位与口径
+
+巡检的群势与螨计数必须携带单位，不同岗位可用不同单位记录，服务在接收时统一换算：
+
+| 维度 | 规范单位 | 兼容单位（原始范围） | 换算 |
+| --- | --- | --- | --- |
+| 群势 | `grade`（1..5 级） | `frame`（1..10 满框数） | `grade = round(frame / 2)` |
+| 螨计数 | `per100`（每百只 0..60） | `per300`（0..180，三百只抽样） | `per100 = round(per300 / 3)` |
+
+- 单位缺失、未知或跨维度不兼容（例如群势带 `per100`、螨带 `grade`）一律 400 拒绝。
+- 原始值与换算后的规范值都会做范围校验。
+- 换算只在接收时执行一次，巡检记录固化原始值、规范值与 `rulesVersion`（当前 `v1`）；
+  汇总与关注项只读固化结果，规则将来升级不会追溯改写历史巡检与关注项。
+- 同一蜂箱的巡检与状态汇总呈现始终使用同一规范口径。
+
 ## 业务规则摘要
 
 - 蜂群状态：`colonized` 可到 `production`，`production` 与 `wintering` 可互相切换，
@@ -70,8 +88,9 @@ go run ./cmd/check -workflow read-apiary-status
 - 已退役蜂箱不再接受巡检与换王。
 - 同一蜂箱任意时刻最多一只 `laying` 蜂王，换王会先关闭旧记录。
 - 蜂王标记色由引入年份个位推导：`1/6` 白、`2/7` 黄、`3/8` 红、`4/9` 绿、`5/0` 蓝。
-- 巡检关注项阈值：螨计数 ≥ 9 记 `mite_load`，子脾为 `none` 记 `brood_gap`，
-  性情为 `aggressive` 记 `temper_risk`，群势 ≤ 2 记 `low_strength`。
+- 巡检关注项阈值（均基于换算后的规范口径）：螨计数（每百只）≥ 9 记 `mite_load`，
+  子脾为 `none` 记 `brood_gap`，性情为 `aggressive` 记 `temper_risk`，
+  群势（级）≤ 2 记 `low_strength`。
 - 待巡检：从未巡检，或距 `asOf` 超过 14 天。
 
 ## 环境变量
