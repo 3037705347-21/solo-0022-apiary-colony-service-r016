@@ -47,13 +47,16 @@ go run ./cmd/check -workflow read-apiary-status
 - `GET /hives/{hiveId}`：读回蜂箱。
 - `POST /hives/{hiveId}/state`：输入 `target`，返回迁移前后的状态。
 - `POST /hives/{hiveId}/inspections`：输入 `observedAt`（可选，RFC3339）、`colonyStrength`、
-  `broodPattern`、`temper`、`miteCount`、`note`，返回巡检与派生关注项。
+  `colonyStrengthUnit`（可选，`scale5` 缺省/`score10`）、`broodPattern`、`temper`、`miteCount`、
+  `miteCountUnit`（可选，`per100` 缺省/`per300`）、`note`。读数在接受前换算到标准口径
+  （五分制群势、每百只成蜂螨计数），返回体同时给出钉住口径下的呈现值、单位与原始读数，
+  以及保存时派生的关注项。
 - `GET /hives/{hiveId}/inspections`：列出巡检。
 - `POST /hives/{hiveId}/queens`：输入 `origin`、`introducedAt`（可选）、`reason`，
   返回带标记色的新蜂王记录。
 - `GET /hives/{hiveId}/queens`：列出蜂王记录。
 - `GET /apiaries/{apiaryId}/status`：可选查询参数 `asOf`（RFC3339），返回状态计数、
-  待巡检蜂箱、有未处理关注项的蜂箱与逐蜂箱摘要。
+  待巡检蜂箱、有未处理关注项的蜂箱与逐蜂箱摘要；摘要中的最近巡检量测按各蜂箱钉住口径呈现。
 
 错误响应统一为：
 
@@ -70,8 +73,13 @@ go run ./cmd/check -workflow read-apiary-status
 - 已退役蜂箱不再接受巡检与换王。
 - 同一蜂箱任意时刻最多一只 `laying` 蜂王，换王会先关闭旧记录。
 - 蜂王标记色由引入年份个位推导：`1/6` 白、`2/7` 黄、`3/8` 红、`4/9` 绿、`5/0` 蓝。
-- 巡检关注项阈值：螨计数 ≥ 9 记 `mite_load`，子脾为 `none` 记 `brood_gap`，
-  性情为 `aggressive` 记 `temper_risk`，群势 ≤ 2 记 `low_strength`。
+- 巡检量测在接受前统一换算到标准口径：群势五分制 `1..5`（`score10` 十分制 `1..10` 半数向上
+  收敛），螨计数每百只成蜂 `0..60`（`per300` 为三百只样本 `0..180` 除以 3 半数向上取整）。
+  未知或维度不兼容的单位返回 `invalid_request`，不会被静默接受。
+- 每个蜂箱首次巡检时钉住展示口径；该蜂箱的巡检呈现与状态汇总始终使用同一口径，
+  原始读数、提交单位与换算规则版本（`unit-rules-v1`）随记录固化，规则调整不追溯改写历史。
+- 巡检关注项阈值（均作用于标准口径）：螨计数 ≥ 9 记 `mite_load`，子脾为 `none` 记
+  `brood_gap`，性情为 `aggressive` 记 `temper_risk`，群势 ≤ 2 记 `low_strength`。
 - 待巡检：从未巡检，或距 `asOf` 超过 14 天。
 
 ## 环境变量
@@ -86,6 +94,7 @@ go run ./cmd/check -workflow read-apiary-status
 go run ./cmd/check -workflow register-apiary
 go run ./cmd/check -workflow install-hive
 go run ./cmd/check -workflow record-inspection
+go run ./cmd/check -workflow measurement-units
 go run ./cmd/check -workflow replace-queen
 go run ./cmd/check -workflow advance-hive-state
 go run ./cmd/check -workflow read-apiary-status

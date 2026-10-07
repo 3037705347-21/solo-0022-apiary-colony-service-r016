@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 )
@@ -120,6 +121,114 @@ func checkRecordInspection(c *client) error {
 	return nil
 }
 
+func checkMeasurementUnits(c *client) error {
+	if err := seedDefault(c); err != nil {
+		return err
+	}
+	// 首次巡检以十分制群势、三百只样本螨计数提交，蜂箱展示口径随之钉住。
+	// 7/10 换算到五分制为 4，螨计数 30/300 换算为 10/100：仅触发 mite_load。
+	first, err := c.expect("POST", "/hives/hive-01/inspections", map[string]any{
+		"observedAt":     "2026-04-10T09:00:00Z",
+		"colonyStrength": 7, "colonyStrengthUnit": "score10",
+		"broodPattern": "patchy", "temper": "calm",
+		"miteCount": 30, "miteCountUnit": "per300", "note": "跨岗位协作记录",
+	}, 201,
+		`"inspection-000001"`,
+		`"colonyStrength":8,"colonyStrengthUnit":"score10"`,
+		`"rawColonyStrength":7,"rawColonyStrengthUnit":"score10"`,
+		`"miteCount":30,"miteCountUnit":"per300"`,
+		`"rawMiteCount":30,"rawMiteCountUnit":"per300"`,
+		`"conversionVersion":"unit-rules-v1"`,
+		`"mite_load"`,
+	)
+	if err != nil {
+		return err
+	}
+	if strings.Contains(first.text(), "low_strength") {
+		return fmt.Errorf("换算后群势为 4，不应派生 low_strength：%s", first.text())
+	}
+	// 第二次巡检缺省按标准口径提交：原始读数留痕为标准口径，
+	// 但呈现仍换算到蜂箱已钉住的 score10/per300；关注项基于标准口径派生。
+	if _, err := c.expect("POST", "/hives/hive-01/inspections", map[string]any{
+		"observedAt":     "2026-04-12T09:00:00Z",
+		"colonyStrength": 2, "broodPattern": "solid", "temper": "calm",
+		"miteCount": 9, "note": "",
+	}, 201,
+		`"colonyStrength":4,"colonyStrengthUnit":"score10"`,
+		`"rawColonyStrength":2,"rawColonyStrengthUnit":"scale5"`,
+		`"miteCount":27,"miteCountUnit":"per300"`,
+		`"rawMiteCount":9,"rawMiteCountUnit":"per100"`,
+		`"mite_load"`, `"low_strength"`,
+	); err != nil {
+		return err
+	}
+	// 未知单位不能被静默接受。
+	if _, err := c.expect("POST", "/hives/hive-01/inspections", map[string]any{
+		"observedAt":     "2026-04-13T09:00:00Z",
+		"colonyStrength": 3, "miteCount": 3, "miteCountUnit": "per1000",
+		"broodPattern": "solid", "temper": "calm", "note": "",
+	}, 400, `"code":"invalid_request"`, `"field":"miteCountUnit"`); err != nil {
+		return err
+	}
+	// 维度不兼容的单位必须拒绝，不能当成同一口径比较。
+	if _, err := c.expect("POST", "/hives/hive-01/inspections", map[string]any{
+		"observedAt":     "2026-04-13T09:00:00Z",
+		"colonyStrength": 3, "colonyStrengthUnit": "per100",
+		"miteCount": 3, "broodPattern": "solid", "temper": "calm", "note": "",
+	}, 400, `"code":"invalid_request"`, `"field":"colonyStrengthUnit"`); err != nil {
+		return err
+	}
+	// 原始读数超出提交单位自身范围也要拒绝。
+	if _, err := c.expect("POST", "/hives/hive-01/inspections", map[string]any{
+		"observedAt":     "2026-04-13T09:00:00Z",
+		"colonyStrength": 11, "colonyStrengthUnit": "score10",
+		"miteCount": 0, "broodPattern": "solid", "temper": "calm", "note": "",
+	}, 400, `"code":"invalid_request"`, `"field":"colonyStrength"`); err != nil {
+		return err
+	}
+	if _, err := c.expect("POST", "/hives/hive-01/inspections", map[string]any{
+		"observedAt":     "2026-04-13T09:00:00Z",
+		"colonyStrength": 3, "miteCount": 181, "miteCountUnit": "per300",
+		"broodPattern": "solid", "temper": "calm", "note": "",
+	}, 400, `"code":"invalid_request"`, `"field":"miteCount"`); err != nil {
+		return err
+	}
+	// 状态汇总中的量测呈现必须与巡检列表使用同一钉住口径，且取最近一次巡检。
+	if _, err := c.expect("GET", "/apiaries/apiary-north/status?asOf=2026-04-13T00:00:00Z", nil, 200,
+		`"latestMeasurement":{"colonyStrength":4,"colonyStrengthUnit":"score10","miteCount":27,"miteCountUnit":"per300"}`,
+		`"concernHives":["hive-01"]`,
+	); err != nil {
+		return err
+	}
+	// 历史巡检在保存时即固化：换算结果、原始读数与关注项不随后续提交变化。
+	list, err := c.expect("GET", "/hives/hive-01/inspections", nil, 200)
+	if err != nil {
+		return err
+	}
+	var records []struct {
+		ID       string   `json:"id"`
+		Concerns []string `json:"concerns"`
+	}
+	if err := json.Unmarshal(list.body, &records); err != nil {
+		return err
+	}
+	if len(records) != 2 {
+		return fmt.Errorf("期望 2 条已固化巡检，实际 %d：%s", len(records), list.text())
+	}
+	wantConcerns := [][]string{{"mite_load"}, {"mite_load", "low_strength"}}
+	for i, want := range wantConcerns {
+		if len(records[i].Concerns) != len(want) {
+			return fmt.Errorf("第 %d 条巡检关注项被改写：%s", i+1, list.text())
+		}
+		for j := range want {
+			if records[i].Concerns[j] != want[j] {
+				return fmt.Errorf("第 %d 条巡检关注项被改写：%s", i+1, list.text())
+			}
+		}
+	}
+	return nil
+}
+
 func checkReplaceQueen(c *client) error {
 	if err := seedDefault(c); err != nil {
 		return err
@@ -206,7 +315,9 @@ func checkReadApiaryStatus(c *client) error {
 		return err
 	}
 	report, err := c.expect("GET", "/apiaries/apiary-north/status?asOf=2026-04-12T00:00:00Z", nil, 200,
-		`"hiveCount":3`, `"colonized":2`, `"production":1`, `"layingQueens":0`)
+		`"hiveCount":3`, `"colonized":2`, `"production":1`, `"layingQueens":0`,
+		`"latestMeasurement":{"colonyStrength":4,"colonyStrengthUnit":"scale5","miteCount":12,"miteCountUnit":"per100"}`,
+	)
 	if err != nil {
 		return err
 	}

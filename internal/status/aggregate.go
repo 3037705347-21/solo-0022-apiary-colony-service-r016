@@ -17,6 +17,16 @@ type HiveSummary struct {
 	LatestConcerns   []string   `json:"latestConcerns"`
 	QueenID          string     `json:"queenId"`
 	QueenMarkColor   string     `json:"queenMarkColor"`
+	// 最近一次巡检的量测呈现，始终使用该蜂箱钉住的展示口径；从未巡检时为 nil。
+	LatestMeasurement *MeasurementView `json:"latestMeasurement,omitempty"`
+}
+
+// MeasurementView 是状态汇总中一次巡检量测的呈现，值与单位同口径。
+type MeasurementView struct {
+	ColonyStrength int    `json:"colonyStrength"`
+	StrengthUnit   string `json:"colonyStrengthUnit"`
+	MiteCount      int    `json:"miteCount"`
+	MiteUnit       string `json:"miteCountUnit"`
 }
 
 type Report struct {
@@ -61,6 +71,13 @@ func BuildReport(snapshot store.Snapshot, apiary domain.Apiary, asOf time.Time) 
 		if latest, ok := snapshot.LatestInspection(hive.ID); ok {
 			observedAt := latest.ObservedAt
 			summary.LastInspectionAt = &observedAt
+			// 巡检记录中保存的呈现值已经换算到蜂箱钉住口径，汇总直接采用同一口径。
+			summary.LatestMeasurement = &MeasurementView{
+				ColonyStrength: latest.ColonyStrength,
+				StrengthUnit:   string(latest.ColonyStrengthUnit),
+				MiteCount:      latest.MiteCount,
+				MiteUnit:       string(latest.MiteCountUnit),
+			}
 			if len(latest.Concerns) > 0 {
 				summary.LatestConcerns = append([]string{}, latest.Concerns...)
 				report.ConcernHives = append(report.ConcernHives, hive.ID)

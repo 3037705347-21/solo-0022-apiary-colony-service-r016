@@ -20,6 +20,10 @@ const (
 )
 
 // Hive 表示一只蜂箱及其当前蜂群状态。
+//
+// StrengthUnit/MiteUnit 是该蜂箱首次巡检时钉住的量测展示口径，之后所有巡检
+// 与状态汇总中的呈现都换算到这一固定口径，保证同一蜂箱始终使用同一口径。
+// 从未巡检时为空串。
 type Hive struct {
 	ID               string     `json:"id"`
 	ApiaryID         string     `json:"apiaryId"`
@@ -28,6 +32,8 @@ type Hive struct {
 	InstalledAt      time.Time  `json:"installedAt"`
 	ActiveQueenID    string     `json:"activeQueenId"`
 	LastInspectionAt *time.Time `json:"lastInspectionAt"`
+	StrengthUnit     Unit       `json:"strengthUnit,omitempty"`
+	MiteUnit         Unit       `json:"miteUnit,omitempty"`
 }
 
 // Transition 描述一次成功的蜂群状态迁移。

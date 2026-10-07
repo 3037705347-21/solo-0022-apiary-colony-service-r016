@@ -89,9 +89,21 @@ func (m *Memory) AdvanceHive(hiveID string, target domain.HiveState, _ time.Time
 	return domain.Transition{HiveID: hiveID, From: from, To: target}, nil
 }
 
+// InspectionDraft 是已经完成单位解析、标准口径换算与关注项派生、等待固化的巡检草稿。
+// 钉住蜂箱展示口径的决策必须在写锁内完成，因此由 AddInspection 统一构造最终记录。
+type InspectionDraft struct {
+	ObservedAt   time.Time
+	Measurement  domain.ResolvedMeasurement
+	BroodPattern domain.BroodPattern
+	Temper       domain.Temper
+	Note         string
+	Concerns     []string
+}
+
 // AddInspection 分配巡检编号、写入记录，并推进蜂箱的最近巡检时间。
-// 蜂箱存在与可接受巡检的判定与写入处于同一把锁，避免退役与巡检之间的竞态。
-func (m *Memory) AddInspection(hiveID string, inspection domain.Inspection) (domain.Inspection, error) {
+// 蜂箱存在与可接受巡检的判定与写入处于同一把锁，避免退役与巡检之间的竞态；
+// 蜂箱首次巡检时也在这把锁内钉住该蜂箱各量测维度的展示口径。
+func (m *Memory) AddInspection(hiveID string, draft InspectionDraft) (domain.Inspection, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	hive, ok := m.hives[hiveID]
@@ -101,15 +113,37 @@ func (m *Memory) AddInspection(hiveID string, inspection domain.Inspection) (dom
 	if !hive.AcceptsInspection() {
 		return domain.Inspection{}, domain.InvalidState("蜂箱 %q 处于 %q 状态，不接受巡检", hiveID, hive.State)
 	}
+	// 首次巡检按提交单位钉住展示口径（缺省即标准口径）；此后同一蜂箱固定使用该口径。
+	// 提交单位的维度与合规性已在解析阶段校验，此处只需直接落定。
+	if hive.StrengthUnit == "" {
+		hive.StrengthUnit = draft.Measurement.StrengthRawUnit
+	}
+	if hive.MiteUnit == "" {
+		hive.MiteUnit = draft.Measurement.MiteRawUnit
+	}
+	record, err := domain.NewInspection(
+		hiveID,
+		draft.ObservedAt,
+		draft.Measurement,
+		hive.StrengthUnit,
+		hive.MiteUnit,
+		draft.BroodPattern,
+		draft.Temper,
+		draft.Note,
+	)
+	if err != nil {
+		return domain.Inspection{}, err
+	}
+	record.Concerns = draft.Concerns
 	m.inspectionSeq++
-	inspection.ID = fmt.Sprintf("inspection-%06d", m.inspectionSeq)
-	inspection.HiveID = hiveID
-	m.inspections[hiveID] = append(m.inspections[hiveID], inspection)
+	record.ID = fmt.Sprintf("inspection-%06d", m.inspectionSeq)
+	record.HiveID = hiveID
+	m.inspections[hiveID] = append(m.inspections[hiveID], record)
 
-	observedAt := inspection.ObservedAt
+	observedAt := record.ObservedAt
 	hive.LastInspectionAt = &observedAt
 	m.hives[hiveID] = hive
-	return inspection, nil
+	return record, nil
 }
 
 // AddQueen 关闭原有产卵蜂王并写入新蜂王，两件事在同一把锁内完成，
